@@ -1,0 +1,58 @@
+//Code Start
+
+#Unzip image data set
+>>unzip('electronics.zip');
+>>imds = imageDatastore('electronics, 'IncludeSubfolders', true, 'LabelSource', 'foldernames');
+
+#Split data set intro training and testing/validation
+>>[imdsTrain, imdsValidation] = splitEachlabel(imds, 0.7, 'randomized');
+
+#Call pretrained Deep Learning model
+>>net = inceptionv3;
+>>lgraph = layerGraph(net);
+
+#Adjust input layer size
+>>inputSize = net.Layers(1).InputSize;
+
+#Modify layers for transfer learning
+>>lgraph = removeLayers(lgraph, {'predictions', 'predictions_softmax', 'ClassificationLayer_predictions'});
+>>numClasses = numel(categories(imdsTrain.Labels));
+>>newLayers = [fullyConnectedLayer(numClasses, 'Name', 'fc', 'WeightLearnRateFactor', 10, 'BiasLearnRateFactor', 10)
+              softmaxLayer('Name', 'softmax')
+              ClassificationLayer('Name', 'classoutput')];
+              
+>>lgraph = addLayers(lgraph, newLayers);
+>>lgraph = connectLayers(lgraph, 'avg_pool', 'fc');
+>>layers = lgraph.Layers;
+>>connections = lgraph.Connections;
+
+#Freeze the initial layers to speed up training and prevent overfitting
+>>layers(1:110) = freezeWeights(layers(1:110));
+>>lgraph = createLgraphUsingConnections(layers, connections);
+
+#Data Augmentation
+>>pixelRange = [-30, 30];
+>>imageAugmenter = imageDataAugmenter('RandXReflection', true, 'RandXTranslation', pixelRange, 'RandYTranslation, pixelRange);
+>>augimdsTrain = augmentedImageDatastore(inputsize(1:2), imdsTrain, 'DataAugmentation', imageAugmenter, 'ColorPreprocessing', 'gray2rgb');
+>>augimdsValidation = augmentedImageDatastore(input(1:2), imdsValidation, 'ColorPreprocessing', 'gray2rgb');
+
+#Training the modified deep neural network
+>>options = trainingOptions('sgdm', 'MiniBatchSize', 10, 'MaxEpochs', 6, 'InitialLearnRate', 1e-4, 'ValidationData', augimdsValidation,
+            'ValidationFrequency', 3, 'ValidationPatience', Inf, 'Verbose', false, 'Plots', 'training-progress');
+>>net = trainNetwork(augimdsTrain, lgraph, options);
+
+#Network Validation
+>>[YPred, probs] = classify(net, augimdsValidation);
+>>accuracy = mean(YPred == imdsValidation.Labels)
+>>idx = randperm(numel(imdsValidation.Files), 6);
+>>figure
+>>for i = 1:6
+  subplot(3, 3, i)
+  I = readImage(imdsValidation, idx(i));
+  imshow(I)
+  label = YPred(idx(i));
+  title(string(label) + "," + num2str(100*max(probs(idx(i),:)),3) + "%");
+  end
+
+
+//Code End
